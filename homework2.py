@@ -7,19 +7,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import Lasso
 from sklearn.metrics import mean_squared_error
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler, LabelEncoder
-
-
-def getCorelationColumns(corr_matrix) -> set:
-    threshold = 0.8
-    correlated_pairs = set()
-    for i in range(len(corr_matrix.columns)):
-        for j in range(i):
-            if abs(corr_matrix.iloc[i, j]) > threshold:
-                col1, col2 = corr_matrix.columns[i], corr_matrix.columns[j]
-                correlated_pairs.add((col1, col2))
-
-    return correlated_pairs
+from sklearn.preprocessing import LabelEncoder
 
 
 def main():
@@ -31,13 +19,16 @@ def main():
     for colum in columns:
         data[colum] = label_encoder.fit_transform(data[colum].astype(str))
 
-    corr_matrix = data.corr()
+    corr_matrix = data.corr().abs()
+    threshold = 0.8
 
-    corr_columns = getCorelationColumns(corr_matrix)
+    upper_triangle = corr_matrix.where(
+        np.triu(np.ones(corr_matrix.shape), k=1).astype(bool)
+    )
 
-    columns_to_delete = [i[0] for i in corr_columns]
+    corr_columns = [column for column in upper_triangle.columns if any(upper_triangle[column] > threshold)]
 
-    data.drop(columns=columns_to_delete)
+    data = data.drop(columns=corr_columns)
 
     X = data.drop(columns=["SalePrice"])
     y = data["SalePrice"]
@@ -59,9 +50,9 @@ def main():
         c=y,  # Цвет точек зависит от SalePrice
     )
 
-    ax.set_xlabel("Главная компонента 1 (PCA)")
-    ax.set_ylabel("Главная компонента 2 (PCA)")
-    ax.set_zlabel("Целевое значение (SalePrice)")
+    ax.set_xlabel("Первая компонента PCA")
+    ax.set_ylabel("Вторая компонента PCA")
+    ax.set_zlabel("SalePrice")
 
     cbar = fig.colorbar(scatter, ax=ax)
     cbar.set_label("SalePrice")
@@ -70,9 +61,9 @@ def main():
 
     x_train, x_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    alphas = np.logspace(-2, 3, 100) # 0.001 до 1000.
+    alphas = np.logspace(-2, 3, 100)  # 0.001 до 1000.
 
-    lassoErrors = []
+    erorrs = []
 
     for alpha in alphas:
         lassoModel = Lasso(alpha=alpha, max_iter=10000)
@@ -82,43 +73,41 @@ def main():
 
         rmse = mean_squared_error(y_test, yPredLasso)
 
-        lassoErrors.append(rmse)
+        erorrs.append(rmse)
 
-    optimalAlpha = alphas[np.argmin(lassoErrors)]
-    print(f"Оптимальное значение alpha: {optimalAlpha}")
+    best_alpha = alphas[np.argmin(erorrs)]
+    print(f"Оптимальное значение alpha: {best_alpha}")
     plt.figure(figsize=(10, 6))
-    plt.plot(alphas, lassoErrors, label="Lasso", color="brown")
+    plt.plot(alphas, erorrs, label="Lasso", color="brown")
     plt.xscale("log")
     plt.xlabel("Alpha (коэффициент регуляризации)")
     plt.ylabel("RMSE")
     plt.title("Зависимость ошибки от коэффициента регуляризации (Lasso)")
-    plt.axvline(optimalAlpha, color="red", linestyle="--", label=f"Оптимальное alpha: {optimalAlpha:.3f}")
+    plt.axvline(best_alpha, color="red", linestyle="--", label=f"Оптимальное alpha: {best_alpha:.3f}")
     plt.legend()
     plt.show()
 
-    lassoModel = Lasso(alpha=optimalAlpha, max_iter=10000)
+    lassoModel = Lasso(alpha=best_alpha, max_iter=10000)
     lassoModel.fit(x_train, y_train)
 
+    feature_name = data.drop(columns=["SalePrice"]).columns
+    coeffs = lassoModel.coef_
 
-    feature_names = data.drop(columns=["SalePrice"]).columns
-    coefficients = lassoModel.coef_
-
-    coefDataFrame = pd.DataFrame({
-        'Feature': feature_names,
-        'Coefficient': coefficients
+    coeffs_df = pd.DataFrame({
+        "feature": feature_name,
+        "coeffs": coeffs
     })
 
-    coefDataFrame['Absolute Coefficient'] = coefDataFrame['Coefficient'].abs()
-    coefDataFrame = coefDataFrame.sort_values(by='Absolute Coefficient', ascending=False)
+    coeffs_df['abs_coef'] = coeffs_df['coeffs'].abs()
+    coeffs_df = coeffs_df.sort_values(by="abs_coef", ascending=False)
 
+    most_important_features = coeffs_df.iloc[0]
+    print(f'Самый важный признак: {most_important_features["feature"]}.'
+          f' Коэффициент: {most_important_features["coeffs"]}')
 
-    mostInfluentialFeature = coefDataFrame.iloc[0]
-    print(f"Наиболее влиятельный признак: {mostInfluentialFeature['Feature']}")
-    print(f"Коэффициент: {mostInfluentialFeature['Coefficient']}")
-
-    plt.figure(figsize=(10, 6))
-    sns.barplot(x='Absolute Coefficient', y='Feature', data=coefDataFrame.head(10))
-    plt.title("Топ-10 наиболее влиятельных признаков")
+    plt.figure(figsize=(5, 6))
+    sns.barplot(x="abs_coef", y="feature", data=coeffs_df.head(5))
+    plt.title('Рейтинг признаков по важности')
     plt.show()
 
 
